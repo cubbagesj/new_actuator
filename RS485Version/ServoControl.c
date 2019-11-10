@@ -45,7 +45,9 @@ int main(void)
     float motor_angle = 0.0;
 
     char shore_buf[179];
-    
+
+    int previous_command; 
+
     struct control_msg  commands;
 
     /* Declarations for the sockets */
@@ -58,9 +60,6 @@ int main(void)
     int s_control;         /* Output socket descriptors */
     unsigned int alen;
     char *nic0 = "eth0";
-
-    int readtoggle = 0;
-    
 
     /* Declarations for Select Call */
     struct timeval tv;          /* Timeout for recvfrom call */
@@ -104,6 +103,8 @@ int main(void)
     commands.syncwd = CMD_PKT;
     commands.encoder_ang = (int) (encoder_angle * 100);
     commands.motor_ang = (int) (motor_angle * 100);
+
+    previous_command = 0;
     
     /* infinite loop for packets */
     while (1) 
@@ -148,6 +149,21 @@ int main(void)
                 memcpy(&commands,&buff_in[0], 4);
 
 
+                /* Using the Lantronix to do ethernet/RS485 conversion.  It 
+                 * takes a minimum of 20ms to send/receive the 9 byte message
+                 * and response.  This means that we can do only
+                 * 2 send/receive cycles per 50ms (20Hz) loop
+                 *
+                 * The normal loop will do a move command and a read encoder
+                 * message.  However, since there is not a new move command
+                 * every 50ms unless we are in active depth control, if the 
+                 * new position is the same as the previous we will instead do
+                 * a motor position read.
+                 *
+                 * This should up the motor read frequency, while keeping the 
+                 * encoder at 20 HZ
+                 */
+
                 /* The controller expects an angle command.  The current value in
                  * commands.serocmd is the angle * 100 so it can be an integer
                  * Need to convert to float angle and then send to servo
@@ -157,34 +173,31 @@ int main(void)
                  * reduce how much the stepper has to work.
                  */
 
-                /* Compare new command with current position 
-                  Look for a difference of > 0.1 deg*/
+                /* Compare new command with previous command 
+                  Look for a difference of > 0.1 deg if not read motor*/
 
-                 /*if (abs(((float) commands.servocmd /100.0) - encoder_angle) > .10) 
+                 if (abs( commands.servocmd  - previous_command) > 10) 
                  {
                      servo_move(((float) commands.servocmd) / 100.0);
-                 }*/
-                 
-
-                 servo_move(((float) commands.servocmd) / 100.0);
-                 /* Now get the encoder position */
-
-                 if (readtoggle++ >= 5){
-                     readtoggle = 0;
+                 }
+                 else {
                      encoder_angle = servo_read(INTERNAL);
                      if (encoder_angle >= -900){
                          commands.motor_ang = (short) (encoder_angle * 100);
                      }
                  }
-                 else {
-                     encoder_angle = servo_read(EXTERNAL);
-		             if (encoder_angle >= -900)
-                     {
-                         /* -900 means a bad response so keep the last value */
-                         commands.encoder_ang = (short) (encoder_angle * 100);
-		             }
-                 }
 
+                 previous_command = commands.servocmd;
+
+                 /* Now get the encoder position */
+
+                 encoder_angle = servo_read(EXTERNAL);
+		         if (encoder_angle >= -900)
+                 {
+                     /* -900 means a bad response so keep the last value */
+                     commands.encoder_ang = (short) (encoder_angle * 100);
+		         }
+                 
                  //printf("Cmd: %d, Motor Angle: %f, Enc Angle: %f\n",commands.servocmd, commands.motor_ang/100.0, commands.encoder_ang / 100.0 );
                 break;
     
